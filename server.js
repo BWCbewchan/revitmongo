@@ -4,6 +4,10 @@ const cors = require("cors");
 const path = require('path');
 const request = require('request');
 const db = require("./models");
+const mongoose = require('mongoose');
+// const User = require('./models/User');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 
@@ -95,7 +99,87 @@ app.get("/collections/:name", async (req, res) => {
 
 
 //
+const db2 = mongoose.createConnection('mongodb+srv://ngophuc2911:phuc29112003@cluster0.buhheri.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0/dangNhapCauPha', {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+});
 
+db2.on('connected', () => {
+    console.log("Connected to DB2");
+});
+
+db2.on('error', (err) => {
+    console.error('Cannot connect to DB2:', err);
+});
+
+// Register User schema with db2 connection
+const UserSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    password: { type: String, required: true }
+});
+
+const UserModel = mongoose.model('User', UserSchema);
+
+// Register route
+app.post('/register', async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const existingUser = await UserModel.findOne({ username });
+        if (existingUser) {
+            return res.status(400).json({ success: false, message: 'User already exists.' });
+        }
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const newUser = new UserModel({ username, password: hashedPassword });
+        await newUser.save();
+        res.status(201).json({ success: true, message: 'User registered successfully.' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Registration failed. Please try again.' });
+    }
+});
+
+// Login route
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const user = await UserModel.findOne({ username });
+        if (!user) {
+            return res.status(401).json({ message: 'Invalid username or password' });
+        }
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        if (!isPasswordValid) {
+            return res.status(401).json({ message: 'Invalid username or password' });
+        }
+        const token = jwt.sign({ userId: user._id }, 'your_jwt_secret', { expiresIn: '1h' });
+        res.json({ token });
+    } catch (error) {
+        res.status(500).json({ message: 'Login failed. Please try again.' });
+    }
+});
+
+// Protected route
+const authenticateToken = (req, res, next) => {
+    const token = req.headers['authorization'];
+    if (!token) {
+        return res.status(401).json({ message: 'Access denied. No token provided.' });
+    }
+    try {
+        const decoded = jwt.verify(token, 'your_jwt_secret');
+        req.user = decoded;
+        next();
+    } catch (err) {
+        res.status(401).json({ message: 'Invalid token.' });
+    }
+};
+
+// Protected route
+app.get('/protected', authenticateToken, (req, res) => {
+    res.json({ message: 'This is protected data', userId: req.user.userId });
+});
+
+// Route to serve the HTML file
+app.get("/", (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // Start the server
 app.listen(PORT, () => {
